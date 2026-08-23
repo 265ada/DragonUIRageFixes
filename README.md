@@ -25,6 +25,8 @@ in mind.
 - `/duf roleicons [on|off]` -- role icons on nameplates (works alongside
   TurboPlates). `/duf rolesize <6-40>` and `/duf roleoffset <x> <y>` tune
   them; `/duf roleart [on|off]` switches to custom `Artwork\` icons.
+- **Right-click the gold in your bags** to delete individual characters
+  from DragonUI's Alt Gold list, or reset all of it.
 - `/duf goldlist` -- list DragonUI's stored Alt Gold entries.
 - `/duf resetgold` -- wipe DragonUI's Alt Gold data so it re-captures.
   `/duf resetgold keep` keeps the current character; `/duf resetgold <name>`

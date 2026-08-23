@@ -17,6 +17,12 @@ saved-variable toggle, off by default unless noted.
   next login. The store is wiped in place rather than replaced, because
   DragonUI's altmoney module holds a live reference to that same table.
 
+  **Right-click the gold in your bags** to manage it where it's actually
+  shown: the menu lists every recorded character (with their gold) so you
+  can delete them individually, plus a confirm-gated "Reset all". On by
+  default. Left-click coin pickup is untouched -- OnClick is hooked, not
+  replaced, and everything but RightButton is ignored.
+
 - **Role icons on nameplates.** Shows a small tank / healer / support icon
   beside group members' nameplates. Coexists with TurboPlates rather than
   replacing it -- it draws its own texture on the nameplate frame (anchored

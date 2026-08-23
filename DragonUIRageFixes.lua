@@ -29,6 +29,12 @@ local OPTIONS = {
         default = false,
     },
     {
+        key = "altGoldRightClickMenu",
+        label = "Right-click bag gold to manage Alt Gold",
+        desc = "Right-clicking the gold in your bags opens a menu to delete a single character's stored gold, or wipe all of it. Left-click coin pickup is unaffected.",
+        default = true,
+    },
+    {
         key = "nameplateRoleIcons",
         label = "Role icons on nameplates",
         desc = "Shows a small tank / healer / support icon above group members' nameplates. Sits alongside TurboPlates rather than replacing it -- it draws its own icon on the nameplate frame and never touches TurboPlates' own healer mark.",
@@ -404,6 +410,138 @@ local function ResetAltGold(keepCurrent, onlyKey)
         removed, removed == 1 and "y" or "ies",
         onlyKey and "" or " Current character re-recorded; alts refresh on next login."))
 end
+
+--------------------------------------------------------------------------
+-- Fix #3b: right-click the bag gold to manage Alt Gold entries
+--
+-- DragonUI already hooks OnEnter/OnLeave of the bag money buttons
+-- (ContainerFrame<N>MoneyFrameGold/Silver/CopperButton) to show its Alt
+-- Gold tooltip. This adds a right-click menu on those same buttons to
+-- delete a single character or wipe the lot, so the data can be managed
+-- where it's actually displayed instead of only via slash commands.
+--
+-- OnClick is hooked (not replaced) and ignores anything but RightButton,
+-- so the stock left-click coin-pickup behaviour is untouched.
+--------------------------------------------------------------------------
+
+local altGoldMenuFrame
+
+StaticPopupDialogs["DUF_RESET_ALT_GOLD"] = {
+    text = "Wipe ALL stored Alt Gold data?\n\nYour current character is re-recorded immediately; other characters refresh the next time you log into them.",
+    button1 = YES or "Yes",
+    button2 = NO or "No",
+    OnAccept = function() ResetAltGold(false, nil) end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
+local function BuildAltGoldMenu()
+    local menu = {
+        { text = "Alt Gold", isTitle = true, notCheckable = true },
+    }
+
+    local store = AltGoldStore()
+    local currentKey = CurrentGoldKey()
+
+    -- Sorted so the menu order is stable between openings.
+    local keys = {}
+    if store then
+        for key in pairs(store) do keys[#keys + 1] = key end
+        table.sort(keys)
+    end
+
+    if #keys == 0 then
+        menu[#menu + 1] = { text = "(no data recorded)", notCheckable = true, disabled = true }
+    else
+        for _, key in ipairs(keys) do
+            local entry = store[key]
+            local realm, name = key:match("^(.-)|(.+)$")
+            name = name or key
+            local gold = math.floor(((type(entry) == "table" and entry.copper) or 0) / 10000)
+            local label = ("Delete %s (%dg)"):format(name, gold)
+            if key == currentKey then
+                label = label .. " |cff808080(current)|r"
+            end
+            menu[#menu + 1] = {
+                text = label,
+                notCheckable = true,
+                func = function()
+                    store[key] = nil
+                    print(("|cff33ccffDragonUI Rage Fixes|r: removed Alt Gold entry for %s."):format(name))
+                end,
+            }
+        end
+    end
+
+    menu[#menu + 1] = { text = "", disabled = true, notCheckable = true }
+    menu[#menu + 1] = {
+        text = "Reset all Alt Gold data",
+        notCheckable = true,
+        func = function() StaticPopup_Show("DUF_RESET_ALT_GOLD") end,
+    }
+    menu[#menu + 1] = { text = CANCEL or "Cancel", notCheckable = true }
+
+    return menu
+end
+
+local function ShowAltGoldMenu(anchor)
+    if type(_G.EasyMenu) ~= "function" then
+        -- Shouldn't happen on 3.3.5a, but degrade to the slash commands
+        -- rather than erroring on click.
+        print("|cff33ccffDragonUI Rage Fixes|r: dropdown menus unavailable -- use /duf resetgold or /duf goldlist.")
+        return
+    end
+    if not altGoldMenuFrame then
+        altGoldMenuFrame = CreateFrame("Frame", "DUFAltGoldMenuFrame", UIParent, "UIDropDownMenuTemplate")
+    end
+    EasyMenu(BuildAltGoldMenu(), altGoldMenuFrame, anchor or "cursor", 0, 0, "MENU", 2)
+end
+
+local hookedMoneyButtons = {}
+
+local function HookMoneyButton(button)
+    if not button or hookedMoneyButtons[button] then return end
+    hookedMoneyButtons[button] = true
+    -- Additive: keeps LeftButtonUp so coin pickup still works.
+    if button.RegisterForClicks then
+        button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    end
+    button:HookScript("OnClick", function(self, mouseButton)
+        if mouseButton ~= "RightButton" then return end
+        if DragonUIRageFixesDB.altGoldRightClickMenu == false then return end
+        ShowAltGoldMenu(self)
+    end)
+end
+
+local function HookAllMoneyButtons()
+    for i = 1, (NUM_CONTAINER_FRAMES or 13) do
+        local base = "ContainerFrame" .. i .. "MoneyFrame"
+        HookMoneyButton(_G[base .. "GoldButton"])
+        HookMoneyButton(_G[base .. "SilverButton"])
+        HookMoneyButton(_G[base .. "CopperButton"])
+    end
+    -- Bagster / DragonUI custom money displays, when present.
+    for _, name in ipairs({ "DragonUIBagsterMoney", "BagsterMoneyFrame" }) do
+        local f = _G[name]
+        if f then
+            HookMoneyButton(f.btnGold)
+            HookMoneyButton(f.btnSilver)
+            HookMoneyButton(f.btnCopper)
+            HookMoneyButton(f.btnText)
+        end
+    end
+end
+
+local moneyHookFrame = CreateFrame("Frame")
+moneyHookFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+moneyHookFrame:RegisterEvent("BAG_UPDATE")
+moneyHookFrame:SetScript("OnEvent", function()
+    -- Container money frames are created lazily as bags are opened, so
+    -- re-sweep rather than hooking once at load.
+    HookAllMoneyButtons()
+end)
 
 --------------------------------------------------------------------------
 -- Options UI
