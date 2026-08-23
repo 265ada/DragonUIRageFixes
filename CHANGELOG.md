@@ -6,6 +6,27 @@ saved-variable toggle, off by default unless noted.
 
 ## Unreleased
 
+- **Auto-clear Details! overall data on entering a new instance.** Details'
+  overall segment otherwise accumulates forever, so yesterday's raid keeps
+  inflating today's dungeon numbers.
+
+  Uses `Details:ResetSegmentOverallData()` -- the documented API for the
+  overall segment only, so your per-fight segment history is kept
+  (`ResetSegmentData()` would wipe that too). A "new instance" is a change
+  in instance name + difficulty, so re-running the same dungeon counts as
+  new while zoning inside one instance does not. The reset is deferred a
+  couple of seconds after zone-in (Details may still be initialising) and
+  deferred again while you're in combat, so it can never discard a fight in
+  progress.
+
+  On by default. `/duf detailsreset on|off`, or the options panel.
+  `/duf cleardetails` resets it immediately by hand.
+
+- **Every feature is now toggleable.** Bazaar Token tracking gained a
+  toggle, and all features are listed in the `/duf` options panel with a
+  generic `/duf status` readout. New fixes get a slash toggle automatically
+  rather than needing bespoke command handling.
+
 - **Fixed: nothing attached to DragonUI's bags.** The right-click menu and
   token lines targeted the stock Blizzard bag money buttons
   (`ContainerFrame*MoneyFrame*`), but DragonUI replaces the bag UI entirely

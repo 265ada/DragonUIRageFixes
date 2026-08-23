@@ -35,10 +35,22 @@ local OPTIONS = {
         default = true,
     },
     {
+        key = "trackBazaarTokens",
+        label = "Track Bazaar Tokens per character",
+        desc = "Adds each character's Bazaar Token count to the gold tooltip in your bags. Counts include the bank.",
+        default = true,
+    },
+    {
         key = "nameplateRoleIcons",
         label = "Role icons on nameplates",
         desc = "Shows a small tank / healer / support icon above group members' nameplates. Sits alongside TurboPlates rather than replacing it -- it draws its own icon on the nameplate frame and never touches TurboPlates' own healer mark.",
         default = false,
+    },
+    {
+        key = "detailsAutoReset",
+        label = "Auto-clear Details overall on new instance",
+        desc = "Wipes Details!'s overall segment each time you enter a new dungeon or raid, so numbers never carry over from the previous run. Waits until you're out of combat before resetting.",
+        default = true,
     },
 }
 
@@ -570,6 +582,7 @@ tokenTooltipFrame:SetScript("OnUpdate", function(self)
 end)
 
 local function ScheduleTokenTooltip(owner)
+    if DragonUIRageFixesDB.trackBazaarTokens == false then return end
     SaveCurrentTokens()
     tokenTooltipFrame.owner = owner
     tokenTooltipFrame:Show()
@@ -739,6 +752,99 @@ moneyHookFrame:SetScript("OnUpdate", function(self, elapsed)
 end)
 
 --------------------------------------------------------------------------
+-- Fix #4: clear Details!'s overall data when entering a new instance
+--
+-- Details' "overall" segment accumulates across every fight until manually
+-- reset, so yesterday's raid keeps inflating today's dungeon numbers. This
+-- wipes it on entering a new instance.
+--
+-- Uses Details:ResetSegmentOverallData() -- the documented API for the
+-- overall segment only. (Details:ResetSegmentData() would also nuke the
+-- per-fight segment history, which is usually the part you still want.)
+--
+-- "New instance" is detected by a signature of instance name + difficulty,
+-- so re-running the same dungeon counts as new, while zoning within one
+-- instance does not. PLAYER_ENTERING_WORLD fires before Details has
+-- necessarily finished initialising, so the reset is deferred briefly --
+-- and deferred again if you're in combat, since resetting mid-pull would
+-- discard the fight in progress.
+--------------------------------------------------------------------------
+
+local lastInstanceSignature = nil
+
+local function CurrentInstanceSignature()
+    local inInstance, instanceType = IsInInstance()
+    if not inInstance then return nil, nil, nil end
+    local name, _type, difficultyIndex = GetInstanceInfo()
+    return (tostring(name) .. "|" .. tostring(difficultyIndex)), instanceType, name
+end
+
+local function ShouldResetForInstanceType(instanceType)
+    -- Battlegrounds/arenas are deliberately included: overall carry-over is
+    -- just as misleading there. Only "none" (open world) is skipped, and
+    -- that can't reach here anyway.
+    return instanceType == "party" or instanceType == "raid"
+        or instanceType == "pvp" or instanceType == "arena"
+end
+
+local function DoDetailsOverallReset(instanceName)
+    local Details = _G.Details
+    if not Details or type(Details.ResetSegmentOverallData) ~= "function" then
+        return false
+    end
+    local ok = pcall(Details.ResetSegmentOverallData, Details)
+    if ok then
+        print(("|cff33ccffDragonUI Rage Fixes|r: cleared Details overall data for |cffffd100%s|r."):format(
+            tostring(instanceName or "this instance")))
+    end
+    return ok
+end
+
+local detailsFrame = CreateFrame("Frame")
+local pendingResetName, pendingResetDelay = nil, nil
+
+local function QueueDetailsReset(instanceName)
+    pendingResetName = instanceName
+    pendingResetDelay = 2 -- let Details finish loading after a zone-in
+end
+
+detailsFrame:SetScript("OnUpdate", function(self, elapsed)
+    if not pendingResetDelay then return end
+    pendingResetDelay = pendingResetDelay - elapsed
+    if pendingResetDelay > 0 then return end
+    -- Never reset mid-fight; retry shortly instead.
+    if InCombatLockdown() then
+        pendingResetDelay = 2
+        return
+    end
+    local name = pendingResetName
+    pendingResetDelay, pendingResetName = nil, nil
+    DoDetailsOverallReset(name)
+end)
+
+local function CheckInstanceChange()
+    local signature, instanceType, name = CurrentInstanceSignature()
+
+    if not signature then
+        -- Left the instance; next entry counts as new.
+        lastInstanceSignature = nil
+        return
+    end
+
+    if signature == lastInstanceSignature then return end
+    lastInstanceSignature = signature
+
+    if DragonUIRageFixesDB.detailsAutoReset == false then return end
+    if not ShouldResetForInstanceType(instanceType) then return end
+
+    QueueDetailsReset(name)
+end
+
+detailsFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+detailsFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+detailsFrame:SetScript("OnEvent", CheckInstanceChange)
+
+--------------------------------------------------------------------------
 -- Options UI
 --
 -- A single checkbox-per-fix panel, built dynamically from the OPTIONS
@@ -858,15 +964,43 @@ local function PrintHelp()
     print("  /duf resetgold -- wipe all Alt Gold data (current character re-recorded immediately).")
     print("  /duf resetgold keep -- wipe every character EXCEPT the current one.")
     print("  /duf resetgold <name> -- remove one character's entry.")
+    print("  /duf tracktokens [on|off] -- toggle Bazaar Token tracking.")
+    print("  /duf detailsreset [on|off] -- toggle auto-clearing Details overall on new instances.")
+    print("  /duf cleardetails -- clear Details overall data right now.")
     print("  /duf status -- show current fix states.")
 end
 
 local function PrintStatus()
-    print(("|cff33ccffDragonUI Rage Fixes|r: party hover tooltip = %s"):format(
-        DragonUIRageFixesDB.hidePartyAuraTooltip and "|cffff5555hidden|r" or "|cff55ff55shown|r (default)"))
-    print(("  nameplate role icons = %s (art: %s)"):format(
-        DragonUIRageFixesDB.nameplateRoleIcons and "|cff55ff55on|r" or "|cffff5555off|r",
+    print("|cff33ccffDragonUI Rage Fixes|r: feature states")
+    for _, option in ipairs(OPTIONS) do
+        local on = DragonUIRageFixesDB[option.key]
+        print(("  %s -- %s"):format(option.label,
+            on and "|cff55ff55on|r" or "|cffff5555off|r"))
+    end
+    print(("  role icon: size %s, offset %s,%s, art: %s"):format(
+        tostring(DragonUIRageFixesDB.roleIconSize),
+        tostring(DragonUIRageFixesDB.roleIconOffsetX),
+        tostring(DragonUIRageFixesDB.roleIconOffsetY),
         DragonUIRageFixesDB.useCustomRoleArt and "custom" or "stock LFG"))
+end
+
+-- Generic on/off for any registered feature, so new fixes get a slash
+-- toggle for free instead of needing their own command each time.
+local function ToggleFeature(key, rest)
+    if rest == "on" then
+        DragonUIRageFixesDB[key] = true
+    elseif rest == "off" then
+        DragonUIRageFixesDB[key] = false
+    else
+        DragonUIRageFixesDB[key] = not DragonUIRageFixesDB[key]
+    end
+    for _, option in ipairs(OPTIONS) do
+        if option.key == key then
+            print(("|cff33ccffDragonUI Rage Fixes|r: %s -- %s"):format(option.label,
+                DragonUIRageFixesDB[key] and "|cff55ff55on|r" or "|cffff5555off|r"))
+        end
+    end
+    RefreshAllRoleIcons()
 end
 
 SLASH_DRAGONUIRAGEFIXES1 = "/duf"
@@ -879,24 +1013,9 @@ SlashCmdList["DRAGONUIRAGEFIXES"] = function(msg)
     elseif cmd == "options" or cmd == "config" or cmd == "ui" then
         ToggleOptionsFrame()
     elseif cmd == "partytooltip" then
-        if rest == "on" then
-            DragonUIRageFixesDB.hidePartyAuraTooltip = true
-        elseif rest == "off" then
-            DragonUIRageFixesDB.hidePartyAuraTooltip = false
-        else
-            DragonUIRageFixesDB.hidePartyAuraTooltip = not DragonUIRageFixesDB.hidePartyAuraTooltip
-        end
-        PrintStatus()
+        ToggleFeature("hidePartyAuraTooltip", rest)
     elseif cmd == "roleicons" then
-        if rest == "on" then
-            DragonUIRageFixesDB.nameplateRoleIcons = true
-        elseif rest == "off" then
-            DragonUIRageFixesDB.nameplateRoleIcons = false
-        else
-            DragonUIRageFixesDB.nameplateRoleIcons = not DragonUIRageFixesDB.nameplateRoleIcons
-        end
-        RefreshAllRoleIcons()
-        PrintStatus()
+        ToggleFeature("nameplateRoleIcons", rest)
     elseif cmd == "rolesize" then
         local n = tonumber(rest)
         if n and n >= 6 and n <= 40 then
@@ -932,6 +1051,14 @@ SlashCmdList["DRAGONUIRAGEFIXES"] = function(msg)
         ListAltGold()
     elseif cmd == "tokens" then
         ListTokens()
+    elseif cmd == "tracktokens" then
+        ToggleFeature("trackBazaarTokens", rest)
+    elseif cmd == "detailsreset" then
+        ToggleFeature("detailsAutoReset", rest)
+    elseif cmd == "cleardetails" then
+        if not DoDetailsOverallReset("manual reset") then
+            print("|cff33ccffDragonUI Rage Fixes|r: Details isn't loaded (or has no ResetSegmentOverallData).")
+        end
     elseif cmd == "moneyframes" then
         -- Diagnostic: which money displays this addon managed to hook.
         local n = 0

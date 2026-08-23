@@ -20,6 +20,9 @@ in mind.
 
 - `/duf` -- open the options panel (checkboxes for every fix).
 - `/duf status` -- show current fix states.
+- `/duf detailsreset [on|off]` -- auto-clear Details! overall data when you
+  enter a new dungeon/raid. `/duf cleardetails` does it right now.
+- `/duf tracktokens [on|off]` -- toggle Bazaar Token tracking.
 - `/duf partytooltip [on|off]` -- toggle (or set) the party-frame
   buff/debuff hover tooltip. See CHANGELOG.md.
 - `/duf roleicons [on|off]` -- role icons on nameplates (works alongside
