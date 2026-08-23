@@ -1,0 +1,9 @@
+## Interface: 30300
+## Title: DragonUI Rage Fixes
+## Notes: Small standalone tweaks/fixes for DragonUI annoyances, kept as an external addon (not edits to DragonUI's own files) so a DragonUI update never silently wipes them out.
+## Author: You
+## Version: 1.0
+## OptionalDeps: DragonUI
+## SavedVariables: DragonUIRageFixesDB
+
+DragonUIRageFixes.lua
