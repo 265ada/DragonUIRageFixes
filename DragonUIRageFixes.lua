@@ -515,10 +515,20 @@ local tokenTooltipFrame = CreateFrame("Frame")
 tokenTooltipFrame:Hide()
 
 local function AppendTokenLines(owner)
-    if not owner or not GameTooltip:IsOwned(owner) then return end
+    if not owner then return end
 
     local store = TokenStore(false)
     if not store then return end
+
+    -- On Bagster the tooltip already exists (DragonUI's Alt Gold list) and
+    -- we append to it. On Combuctor nothing owns the tooltip, because
+    -- Combuctor never registers with DragonUI's alt-money module -- so
+    -- open our own rather than silently doing nothing.
+    local standalone = not GameTooltip:IsOwned(owner)
+    if standalone then
+        if not owner:IsVisible() then return end
+        GameTooltip:SetOwner(owner, "ANCHOR_TOPRIGHT")
+    end
 
     local rows = {}
     for key, tokens in pairs(store) do
@@ -531,7 +541,10 @@ local function AppendTokenLines(owner)
             rows[#rows + 1] = { name = name or key, realm = realm, total = total }
         end
     end
-    if #rows == 0 then return end
+    if #rows == 0 then
+        if standalone then GameTooltip:Hide() end
+        return
+    end
 
     table.sort(rows, function(a, b)
         if a.total ~= b.total then return a.total > b.total end
@@ -539,7 +552,7 @@ local function AppendTokenLines(owner)
     end)
 
     local grand = 0
-    GameTooltip:AddLine(" ")
+    if not standalone then GameTooltip:AddLine(" ") end
     GameTooltip:AddLine(TokenName(BAZAAR_TOKEN_ITEM_ID) .. "s", 1, 0.82, 0)
     for _, row in ipairs(rows) do
         GameTooltip:AddDoubleLine(row.name, row.total, 1, 1, 1, 1, 1, 1)
@@ -678,20 +691,28 @@ local function HookMoneyButton(button)
 end
 
 local function HookAllMoneyButtons()
+    -- Stock Blizzard bags.
     for i = 1, (NUM_CONTAINER_FRAMES or 13) do
         local base = "ContainerFrame" .. i .. "MoneyFrame"
         HookMoneyButton(_G[base .. "GoldButton"])
         HookMoneyButton(_G[base .. "SilverButton"])
         HookMoneyButton(_G[base .. "CopperButton"])
     end
-    -- Bagster / DragonUI custom money displays, when present.
-    for _, name in ipairs({ "DragonUIBagsterMoney", "BagsterMoneyFrame" }) do
-        local f = _G[name]
-        if f then
-            HookMoneyButton(f.btnGold)
-            HookMoneyButton(f.btnSilver)
-            HookMoneyButton(f.btnCopper)
-            HookMoneyButton(f.btnText)
+
+    -- DragonUI's two bag replacements each build their own money display
+    -- and name it "DragonUI_<Addon>Money<N>" (ids start at 1). Both are
+    -- swept because either can be the active bag addon -- and note that
+    -- only Bagster registers itself with DragonUI's alt-money module, so
+    -- on Combuctor this addon is the ONLY thing adding to that tooltip.
+    for _, prefix in ipairs({ "DragonUI_CombuctorMoney", "DragonUI_BagsterMoney" }) do
+        for i = 1, 12 do
+            local f = _G[prefix .. i]
+            if f then
+                HookMoneyButton(f.btnGold)
+                HookMoneyButton(f.btnSilver)
+                HookMoneyButton(f.btnCopper)
+                HookMoneyButton(f.btnText)
+            end
         end
     end
 end
@@ -700,8 +721,20 @@ local moneyHookFrame = CreateFrame("Frame")
 moneyHookFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 moneyHookFrame:RegisterEvent("BAG_UPDATE")
 moneyHookFrame:SetScript("OnEvent", function()
-    -- Container money frames are created lazily as bags are opened, so
-    -- re-sweep rather than hooking once at load.
+    -- Money frames are created lazily as bags are opened, so re-sweep
+    -- rather than hooking once at load.
+    HookAllMoneyButtons()
+end)
+
+-- Bagster/Combuctor build their money frames the first time the bag UI is
+-- shown, which fires no event this addon can rely on -- so sweep on a slow
+-- timer too. Already-hooked buttons are skipped, so this settles to a
+-- couple of global lookups per tick.
+local moneySweepAccum = 0
+moneyHookFrame:SetScript("OnUpdate", function(self, elapsed)
+    moneySweepAccum = moneySweepAccum + elapsed
+    if moneySweepAccum < 2 then return end
+    moneySweepAccum = 0
     HookAllMoneyButtons()
 end)
 
@@ -820,6 +853,7 @@ local function PrintHelp()
     print("  /duf roleart [on|off] -- use custom Artwork\\ icons instead of the stock LFG role icons.")
     print("  /duf goldlist -- list DragonUI's stored Alt Gold entries.")
     print("  /duf tokens -- show tracked item counts (Bazaar Tokens) on this character.")
+    print("  /duf moneyframes -- diagnostic: which bag money displays got hooked.")
     print("  /duf trackitem <itemID> -- also track another item per character.")
     print("  /duf resetgold -- wipe all Alt Gold data (current character re-recorded immediately).")
     print("  /duf resetgold keep -- wipe every character EXCEPT the current one.")
@@ -898,6 +932,19 @@ SlashCmdList["DRAGONUIRAGEFIXES"] = function(msg)
         ListAltGold()
     elseif cmd == "tokens" then
         ListTokens()
+    elseif cmd == "moneyframes" then
+        -- Diagnostic: which money displays this addon managed to hook.
+        local n = 0
+        for _ in pairs(hookedMoneyButtons) do n = n + 1 end
+        print(("|cff33ccffDragonUI Rage Fixes|r: %d money button(s) hooked."):format(n))
+        for _, prefix in ipairs({ "DragonUI_CombuctorMoney", "DragonUI_BagsterMoney" }) do
+            for i = 1, 12 do
+                if _G[prefix .. i] then print("  found " .. prefix .. i) end
+            end
+        end
+        if n == 0 then
+            print("  Open your bags first, then run this again.")
+        end
     elseif cmd == "trackitem" then
         local id = tonumber(rest)
         if id then

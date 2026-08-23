@@ -6,6 +6,21 @@ saved-variable toggle, off by default unless noted.
 
 ## Unreleased
 
+- **Fixed: nothing attached to DragonUI's bags.** The right-click menu and
+  token lines targeted the stock Blizzard bag money buttons
+  (`ContainerFrame*MoneyFrame*`), but DragonUI replaces the bag UI entirely
+  -- its money display is a custom frame named `DragonUI_BagsterMoney<N>`
+  (or `DragonUI_CombuctorMoney<N>`), so none of the hooks ever landed.
+  Both are now swept, along with the stock frames, on a slow timer as well
+  as on bag events -- those frames aren't created until the bag UI is first
+  opened, and no event announces it.
+
+  The token tooltip also opens standalone when nothing else owns it, since
+  Combuctor (unlike Bagster) never registers with DragonUI's alt-money
+  module and so has no gold tooltip to append to.
+
+  Added `/duf moneyframes` to report which money displays got hooked.
+
 - **Bazaar Tokens tracked per character.** DragonUI's Alt Gold tooltip only
   knew about gold; hovering the gold in your bags now also lists each
   character's Bazaar Token count, with a total.
