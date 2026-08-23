@@ -6,6 +6,24 @@ saved-variable toggle, off by default unless noted.
 
 ## Unreleased
 
+- **Bazaar Tokens tracked per character.** DragonUI's Alt Gold tooltip only
+  knew about gold; hovering the gold in your bags now also lists each
+  character's Bazaar Token count, with a total.
+
+  Bazaar Tokens are a normal *item* (id `975001`), not a currency, so the
+  count comes from `GetItemCount` including the bank. Counts are stored in
+  this addon's own SavedVariables rather than DragonUI's, and refresh on
+  bag/bank changes.
+
+  The tooltip lines are appended a frame after the money button's OnEnter,
+  because DragonUI's own handler calls `GameTooltip:SetOwner`, which wipes
+  anything added before it -- deferring makes the append independent of
+  which addon hooked first.
+
+  `/duf tokens` shows the current character's tracked counts;
+  `/duf trackitem <itemID>` tracks an additional item. Deleting a character
+  (right-click menu or `/duf resetgold`) now clears its tokens too.
+
 - **Reset DragonUI's Alt Gold data.** DragonUI remembers every character's
   gold in `DragonUIDB.global.characterMoney` and offers no way to clear it,
   so renamed / deleted / transferred characters linger in the bag tooltip

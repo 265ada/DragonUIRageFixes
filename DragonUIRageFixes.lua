@@ -412,6 +412,164 @@ local function ResetAltGold(keepCurrent, onlyKey)
 end
 
 --------------------------------------------------------------------------
+-- Fix #3a: track Bazaar Tokens (and any other item) per character
+--
+-- DragonUI's Alt Gold tooltip only knows about gold. This records each
+-- character's Bazaar Token count alongside it and appends it to that same
+-- tooltip, so you can see tokens per alt without logging into each one.
+--
+-- Bazaar Tokens are a normal ITEM (id 975001), not a currency -- confirmed
+-- from the in-game tooltip -- so the count comes from GetItemCount rather
+-- than the currency API. Bank contents are included, since tokens are
+-- commonly parked there.
+--
+-- Counts live in THIS addon's SavedVariables rather than DragonUI's:
+-- writing into another addon's saved table risks it being pruned by that
+-- addon's own defaults handling on upgrade.
+--------------------------------------------------------------------------
+
+local BAZAAR_TOKEN_ITEM_ID = 975001
+
+local function TokenStore(create)
+    if create and type(DragonUIRageFixesDB.characterTokens) ~= "table" then
+        DragonUIRageFixesDB.characterTokens = {}
+    end
+    return DragonUIRageFixesDB.characterTokens
+end
+
+local function TokenWatchList()
+    local list = DragonUIRageFixesDB.tokenWatch
+    if type(list) ~= "table" or #list == 0 then
+        return { BAZAAR_TOKEN_ITEM_ID }
+    end
+    return list
+end
+
+-- GetItemInfo returns nil for an item the client hasn't cached yet, so
+-- fall back to a stable placeholder instead of dropping the entry.
+local function TokenName(itemID)
+    local name = GetItemInfo(itemID)
+    if name then return name end
+    if itemID == BAZAAR_TOKEN_ITEM_ID then return "Bazaar Token" end
+    return "Item " .. tostring(itemID)
+end
+
+local function CountToken(itemID)
+    if type(_G.GetItemCount) ~= "function" then return 0 end
+    -- includeBank = true; tokens are often parked in the bank.
+    local ok, count = pcall(_G.GetItemCount, itemID, true)
+    return (ok and count) or 0
+end
+
+local function SaveCurrentTokens()
+    local store = TokenStore(true)
+    if not store then return end
+    local key = (GetRealmName() or "") .. "|" .. (UnitName("player") or "")
+
+    local recorded, any = {}, false
+    for _, itemID in ipairs(TokenWatchList()) do
+        local count = CountToken(itemID)
+        if count > 0 then
+            recorded[itemID] = count
+            any = true
+        end
+    end
+
+    -- Written even when empty so spending down to zero clears the old
+    -- figure rather than leaving a stale count forever.
+    store[key] = any and recorded or nil
+end
+
+-- Token cleanup mirrors the Alt Gold resets, so clearing a character
+-- removes both its gold and its token record rather than leaving orphans.
+local function ClearAllTokens()
+    DragonUIRageFixesDB.characterTokens = {}
+end
+
+local function ClearTokensFor(keyOrName)
+    local store = TokenStore(false)
+    if not store or not keyOrName then return end
+    for key in pairs(store) do
+        if key == keyOrName or (key:lower():match("|(.+)$") == keyOrName:lower()) then
+            store[key] = nil
+        end
+    end
+end
+
+local function ListTokens()
+    print("|cff33ccffDragonUI Rage Fixes|r: tracked items on this character:")
+    for _, itemID in ipairs(TokenWatchList()) do
+        print(("  %s (id %d) = %d"):format(TokenName(itemID), itemID, CountToken(itemID)))
+    end
+    print("  Add another with /duf trackitem <itemID>.")
+end
+
+-- Appends the per-character token lines onto DragonUI's Alt Gold tooltip.
+--
+-- This runs a frame LATER than the money button's OnEnter rather than
+-- inline, because DragonUI's own OnEnter calls GameTooltip:SetOwner --
+-- which wipes any lines added before it. Deferring a frame means the
+-- append lands after DragonUI has finished building the tooltip,
+-- regardless of which addon hooked OnEnter first.
+local tokenTooltipFrame = CreateFrame("Frame")
+tokenTooltipFrame:Hide()
+
+local function AppendTokenLines(owner)
+    if not owner or not GameTooltip:IsOwned(owner) then return end
+
+    local store = TokenStore(false)
+    if not store then return end
+
+    local rows = {}
+    for key, tokens in pairs(store) do
+        local realm, name = key:match("^(.-)|(.+)$")
+        local total = 0
+        if type(tokens) == "table" then
+            for _, count in pairs(tokens) do total = total + (count or 0) end
+        end
+        if total > 0 then
+            rows[#rows + 1] = { name = name or key, realm = realm, total = total }
+        end
+    end
+    if #rows == 0 then return end
+
+    table.sort(rows, function(a, b)
+        if a.total ~= b.total then return a.total > b.total end
+        return a.name < b.name
+    end)
+
+    local grand = 0
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(TokenName(BAZAAR_TOKEN_ITEM_ID) .. "s", 1, 0.82, 0)
+    for _, row in ipairs(rows) do
+        GameTooltip:AddDoubleLine(row.name, row.total, 1, 1, 1, 1, 1, 1)
+        grand = grand + row.total
+    end
+    if #rows > 1 then
+        GameTooltip:AddDoubleLine("Total", grand, 1, 0.82, 0, 1, 1, 1)
+    end
+    GameTooltip:Show()
+end
+
+tokenTooltipFrame:SetScript("OnUpdate", function(self)
+    self:Hide()
+    AppendTokenLines(self.owner)
+end)
+
+local function ScheduleTokenTooltip(owner)
+    SaveCurrentTokens()
+    tokenTooltipFrame.owner = owner
+    tokenTooltipFrame:Show()
+end
+
+-- Keep the current character's count fresh as items move around.
+local tokenEventFrame = CreateFrame("Frame")
+tokenEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+tokenEventFrame:RegisterEvent("BAG_UPDATE")
+tokenEventFrame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
+tokenEventFrame:SetScript("OnEvent", function() SaveCurrentTokens() end)
+
+--------------------------------------------------------------------------
 -- Fix #3b: right-click the bag gold to manage Alt Gold entries
 --
 -- DragonUI already hooks OnEnter/OnLeave of the bag money buttons
@@ -430,7 +588,7 @@ StaticPopupDialogs["DUF_RESET_ALT_GOLD"] = {
     text = "Wipe ALL stored Alt Gold data?\n\nYour current character is re-recorded immediately; other characters refresh the next time you log into them.",
     button1 = YES or "Yes",
     button2 = NO or "No",
-    OnAccept = function() ResetAltGold(false, nil) end,
+    OnAccept = function() ResetAltGold(false, nil); ClearAllTokens() end,
     timeout = 0,
     whileDead = true,
     hideOnEscape = true,
@@ -469,6 +627,7 @@ local function BuildAltGoldMenu()
                 notCheckable = true,
                 func = function()
                     store[key] = nil
+                    ClearTokensFor(key)
                     print(("|cff33ccffDragonUI Rage Fixes|r: removed Alt Gold entry for %s."):format(name))
                 end,
             }
@@ -512,6 +671,9 @@ local function HookMoneyButton(button)
         if mouseButton ~= "RightButton" then return end
         if DragonUIRageFixesDB.altGoldRightClickMenu == false then return end
         ShowAltGoldMenu(self)
+    end)
+    button:HookScript("OnEnter", function(self)
+        ScheduleTokenTooltip(self)
     end)
 end
 
@@ -657,6 +819,8 @@ local function PrintHelp()
     print("  /duf roleoffset <x> <y> -- nudge the role icon.")
     print("  /duf roleart [on|off] -- use custom Artwork\\ icons instead of the stock LFG role icons.")
     print("  /duf goldlist -- list DragonUI's stored Alt Gold entries.")
+    print("  /duf tokens -- show tracked item counts (Bazaar Tokens) on this character.")
+    print("  /duf trackitem <itemID> -- also track another item per character.")
     print("  /duf resetgold -- wipe all Alt Gold data (current character re-recorded immediately).")
     print("  /duf resetgold keep -- wipe every character EXCEPT the current one.")
     print("  /duf resetgold <name> -- remove one character's entry.")
@@ -732,13 +896,39 @@ SlashCmdList["DRAGONUIRAGEFIXES"] = function(msg)
         PrintStatus()
     elseif cmd == "goldlist" then
         ListAltGold()
+    elseif cmd == "tokens" then
+        ListTokens()
+    elseif cmd == "trackitem" then
+        local id = tonumber(rest)
+        if id then
+            local list = DragonUIRageFixesDB.tokenWatch
+            if type(list) ~= "table" then
+                list = { BAZAAR_TOKEN_ITEM_ID }
+                DragonUIRageFixesDB.tokenWatch = list
+            end
+            local already = false
+            for _, existing in ipairs(list) do
+                if existing == id then already = true end
+            end
+            if already then
+                print(("|cff33ccffDragonUI Rage Fixes|r: item %d is already tracked."):format(id))
+            else
+                table.insert(list, id)
+                SaveCurrentTokens()
+                print(("|cff33ccffDragonUI Rage Fixes|r: now tracking %s (id %d)."):format(TokenName(id), id))
+            end
+        else
+            print("|cff33ccffDragonUI Rage Fixes|r: /duf trackitem <itemID>  (Bazaar Token is 975001)")
+        end
     elseif cmd == "resetgold" then
         if rest == "" then
             ResetAltGold(false, nil)
+            ClearAllTokens()
         elseif rest == "keep" then
             ResetAltGold(true, nil)
         else
             ResetAltGold(false, rest)
+            ClearTokensFor(rest)
         end
     elseif cmd == "status" then
         PrintStatus()

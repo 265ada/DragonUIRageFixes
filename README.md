@@ -27,7 +27,11 @@ in mind.
   them; `/duf roleart [on|off]` switches to custom `Artwork\` icons.
 - **Right-click the gold in your bags** to delete individual characters
   from DragonUI's Alt Gold list, or reset all of it.
+- Hovering the gold in your bags also lists each character's **Bazaar
+  Token** count (item `975001`, bank included).
 - `/duf goldlist` -- list DragonUI's stored Alt Gold entries.
+- `/duf tokens` -- show tracked item counts on this character.
+- `/duf trackitem <itemID>` -- track an additional item per character.
 - `/duf resetgold` -- wipe DragonUI's Alt Gold data so it re-captures.
   `/duf resetgold keep` keeps the current character; `/duf resetgold <name>`
   removes just one.
