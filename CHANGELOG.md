@@ -6,6 +6,23 @@ saved-variable toggle, off by default unless noted.
 
 ## Unreleased
 
+- **Fixed: leaving and re-entering an instance no longer wipes your data
+  mid-run.** The first version forgot which instance you were in the moment
+  you left, so hearthing out to repair, getting summoned back, or
+  reconnecting all looked like entering a brand-new instance and cleared
+  Details' overall data halfway through the dungeon.
+
+  3.3.5 exposes no unique per-instance id, so re-entry is judged on time:
+  returning to the same instance within a grace window (default 10 minutes)
+  continues the same run, while a longer absence -- or a different instance
+  -- counts as new. State is persisted with epoch `time()` rather than
+  `GetTime()`, so a /reload or relog inside the instance isn't mistaken for
+  a fresh entry either.
+
+  `/duf detailsgrace <minutes>` tunes the window. Known tradeoff: two
+  back-to-back runs of the *same* dungeon started inside the window won't
+  auto-reset -- use `/duf cleardetails` for those.
+
 - **Auto-clear Details! overall data on entering a new instance.** Details'
   overall segment otherwise accumulates forever, so yesterday's raid keeps
   inflating today's dungeon numbers.

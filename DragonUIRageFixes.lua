@@ -77,6 +77,12 @@ local function EnsureDefaults()
     if DragonUIRageFixesDB.roleIconOffsetY == nil then
         DragonUIRageFixesDB.roleIconOffsetY = 0
     end
+    -- Seconds you can be outside an instance before returning counts as a
+    -- new run rather than the same one continuing. 10 minutes comfortably
+    -- covers a repair trip, a summon, or a disconnect.
+    if DragonUIRageFixesDB.detailsReentryGrace == nil then
+        DragonUIRageFixesDB.detailsReentryGrace = 600
+    end
 end
 
 --------------------------------------------------------------------------
@@ -762,15 +768,27 @@ end)
 -- overall segment only. (Details:ResetSegmentData() would also nuke the
 -- per-fight segment history, which is usually the part you still want.)
 --
--- "New instance" is detected by a signature of instance name + difficulty,
--- so re-running the same dungeon counts as new, while zoning within one
--- instance does not. PLAYER_ENTERING_WORLD fires before Details has
--- necessarily finished initialising, so the reset is deferred briefly --
--- and deferred again if you're in combat, since resetting mid-pull would
--- discard the fight in progress.
+-- "New instance" is a signature of instance name + difficulty. Stepping
+-- OUT of an instance and back in (hearth to repair, get summoned, release
+-- and run back, disconnect) must NOT count as a new run -- otherwise the
+-- overall data is wiped halfway through the dungeon.
+--
+-- There is no unique per-instance id exposed on 3.3.5, so re-entry is
+-- judged on time: returning to the same instance within a grace window is
+-- treated as the same run, and only a longer absence (or a different
+-- instance) counts as new. The window is a heuristic, not a guarantee --
+-- back-to-back runs of the SAME dungeon started inside the window won't
+-- auto-reset, which is why /duf cleardetails exists.
+--
+-- State is kept in SavedVariables using epoch time() rather than GetTime(),
+-- so a /reload or relog inside the instance doesn't look like a fresh
+-- entry (GetTime restarts each session).
+--
+-- PLAYER_ENTERING_WORLD fires before Details has necessarily finished
+-- initialising, so the reset is deferred briefly -- and deferred again if
+-- you're in combat, since resetting mid-pull would discard the fight in
+-- progress.
 --------------------------------------------------------------------------
-
-local lastInstanceSignature = nil
 
 local function CurrentInstanceSignature()
     local inInstance, instanceType = IsInInstance()
@@ -822,19 +840,40 @@ detailsFrame:SetScript("OnUpdate", function(self, elapsed)
     DoDetailsOverallReset(name)
 end)
 
+local function DetailsReentryGrace()
+    return DragonUIRageFixesDB.detailsReentryGrace or 600
+end
+
 local function CheckInstanceChange()
     local signature, instanceType, name = CurrentInstanceSignature()
+    local db = DragonUIRageFixesDB
 
     if not signature then
-        -- Left the instance; next entry counts as new.
-        lastInstanceSignature = nil
+        -- Left the instance. Remember WHICH one and when, rather than
+        -- forgetting it, so coming straight back can be recognised as the
+        -- same run instead of a new one.
+        if db.detailsLastInstance then
+            db.detailsLeftAt = time()
+        end
         return
     end
 
-    if signature == lastInstanceSignature then return end
-    lastInstanceSignature = signature
+    local same = (signature == db.detailsLastInstance)
+    local leftAt = db.detailsLeftAt
 
-    if DragonUIRageFixesDB.detailsAutoReset == false then return end
+    db.detailsLastInstance = signature
+    db.detailsLeftAt = nil
+
+    if same then
+        -- Re-entering the instance we were last in. Only treat it as a new
+        -- run if we were away longer than the grace window; a quick trip
+        -- out and back is the same run continuing.
+        if not leftAt or (time() - leftAt) < DetailsReentryGrace() then
+            return
+        end
+    end
+
+    if db.detailsAutoReset == false then return end
     if not ShouldResetForInstanceType(instanceType) then return end
 
     QueueDetailsReset(name)
@@ -967,6 +1006,7 @@ local function PrintHelp()
     print("  /duf tracktokens [on|off] -- toggle Bazaar Token tracking.")
     print("  /duf detailsreset [on|off] -- toggle auto-clearing Details overall on new instances.")
     print("  /duf cleardetails -- clear Details overall data right now.")
+    print("  /duf detailsgrace <minutes> -- how long you can leave an instance before returning counts as a new run.")
     print("  /duf status -- show current fix states.")
 end
 
@@ -1055,6 +1095,15 @@ SlashCmdList["DRAGONUIRAGEFIXES"] = function(msg)
         ToggleFeature("trackBazaarTokens", rest)
     elseif cmd == "detailsreset" then
         ToggleFeature("detailsAutoReset", rest)
+    elseif cmd == "detailsgrace" then
+        local mins = tonumber(rest)
+        if mins and mins >= 0 and mins <= 120 then
+            DragonUIRageFixesDB.detailsReentryGrace = math.floor(mins * 60)
+            print(("|cff33ccffDragonUI Rage Fixes|r: re-entry grace = %d minute(s). Returning to the same instance within that window won't clear Details."):format(mins))
+        else
+            print(("|cff33ccffDragonUI Rage Fixes|r: /duf detailsgrace <minutes 0-120> (current: %d)"):format(
+                math.floor(DetailsReentryGrace() / 60)))
+        end
     elseif cmd == "cleardetails" then
         if not DoDetailsOverallReset("manual reset") then
             print("|cff33ccffDragonUI Rage Fixes|r: Details isn't loaded (or has no ResetSegmentOverallData).")
