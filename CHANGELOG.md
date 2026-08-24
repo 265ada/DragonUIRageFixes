@@ -6,6 +6,22 @@ saved-variable toggle, off by default unless noted.
 
 ## Unreleased
 
+- **Instance re-entry now asks instead of guessing.** Replaces the
+  time-window heuristic, which was wrong often enough in both directions.
+
+  Entering a *different* instance still clears automatically and silently --
+  that stays the default behaviour and never prompts. Only the genuinely
+  ambiguous case asks: you left an instance and came back to the same one,
+  which could be a repair trip / summon / reconnect mid-run, or a fresh run
+  of the same dungeon. A dialog offers "Clear (new run)" or "Keep (same
+  run)", and nothing is cleared unless you choose to.
+
+  A `/reload` or zoning inside the instance is not a re-entry and stays
+  silent. Turn the prompt off with the "Ask when re-entering the same
+  instance" option, in which case re-entry never clears anything.
+
+  The `/duf detailsgrace` command is gone with the heuristic it configured.
+
 - **Fixed: leaving and re-entering an instance no longer wipes your data
   mid-run.** The first version forgot which instance you were in the moment
   you left, so hearthing out to repair, getting summoned back, or

@@ -22,8 +22,9 @@ in mind.
 - `/duf status` -- show current fix states.
 - `/duf detailsreset [on|off]` -- auto-clear Details! overall data when you
   enter a new dungeon/raid. `/duf cleardetails` does it right now.
-  `/duf detailsgrace <minutes>` sets how long you can step out of an
-  instance before returning counts as a new run (default 10).
+  Entering a different instance clears automatically; re-entering the same
+  one asks first (it can't tell a repair trip from a fresh run), and never
+  clears unless you confirm.
 - `/duf tracktokens [on|off]` -- toggle Bazaar Token tracking.
 - `/duf partytooltip [on|off]` -- toggle (or set) the party-frame
   buff/debuff hover tooltip. See CHANGELOG.md.
