@@ -6,6 +6,16 @@ saved-variable toggle, off by default unless noted.
 
 ## Unreleased
 
+- **Quick re-entry no longer prompts.** Returning to the same instance
+  within 2 minutes is now assumed to be the same run and passes silently --
+  no prompt, no reset. Stepping out to repair, taking a summon, or a slow
+  zone-in all land well inside that, and nobody finishes a dungeon and
+  restarts it that fast, so there's nothing genuinely ambiguous to ask
+  about.
+
+  Past that window it stays ambiguous and still asks. `/duf reentrywindow
+  <seconds>` tunes it (default 120).
+
 - **Instance re-entry now asks instead of guessing.** Replaces the
   time-window heuristic, which was wrong often enough in both directions.
 

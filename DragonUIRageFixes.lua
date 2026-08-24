@@ -49,7 +49,7 @@ local OPTIONS = {
     {
         key = "detailsPromptOnReentry",
         label = "Ask when re-entering the same instance",
-        desc = "Leaving an instance and coming back is ambiguous -- it could be a repair trip mid-run, or a fresh run of the same dungeon. When this is on you get asked; when off, re-entry never clears anything. Entering a DIFFERENT instance always clears automatically and never prompts.",
+        desc = "Returning to the same instance within the quick re-entry window (2 minutes by default) is always assumed to be the same run and never asks. Past that it is ambiguous: on, you get asked; off, re-entry never clears anything. Entering a DIFFERENT instance always clears automatically and never prompts.",
         default = true,
     },
     {
@@ -82,6 +82,13 @@ local function EnsureDefaults()
     end
     if DragonUIRageFixesDB.roleIconOffsetY == nil then
         DragonUIRageFixesDB.roleIconOffsetY = 0
+    end
+    -- Seconds away from an instance under which returning is assumed to be
+    -- the same run continuing (no prompt, no reset). Covers a repair trip,
+    -- a summon, or a slow zone-in; a real re-run of the same dungeon can't
+    -- realistically happen this fast.
+    if DragonUIRageFixesDB.detailsQuickReentry == nil then
+        DragonUIRageFixesDB.detailsQuickReentry = 120
     end
 end
 
@@ -891,6 +898,15 @@ local function CheckInstanceChange()
         -- for a /reload or zoning within the instance, which isn't a
         -- re-entry at all and must stay silent.
         if not leftAt then return end
+
+        -- Quick turnaround: stepping out and back within a couple of
+        -- minutes is a repair/summon/reconnect, not a fresh run -- nobody
+        -- clears a dungeon and restarts it that fast. Assume same run and
+        -- don't even ask; a slow player still gets back inside well under
+        -- this window. Beyond it, it's genuinely ambiguous, so ask.
+        local awayFor = time() - leftAt
+        if awayFor <= (db.detailsQuickReentry or 120) then return end
+
         if db.detailsPromptOnReentry == false then return end
         pendingReentryName = name
         StaticPopup_Show("DUF_DETAILS_REENTRY", name)
@@ -1028,6 +1044,7 @@ local function PrintHelp()
     print("  /duf tracktokens [on|off] -- toggle Bazaar Token tracking.")
     print("  /duf detailsreset [on|off] -- toggle auto-clearing Details overall on new instances.")
     print("  /duf cleardetails -- clear Details overall data right now.")
+    print("  /duf reentrywindow <seconds> -- how fast a return counts as the same run, no prompt (default 120).")
     print("  /duf status -- show current fix states.")
 end
 
@@ -1116,6 +1133,15 @@ SlashCmdList["DRAGONUIRAGEFIXES"] = function(msg)
         ToggleFeature("trackBazaarTokens", rest)
     elseif cmd == "detailsreset" then
         ToggleFeature("detailsAutoReset", rest)
+    elseif cmd == "reentrywindow" then
+        local secs = tonumber(rest)
+        if secs and secs >= 0 and secs <= 900 then
+            DragonUIRageFixesDB.detailsQuickReentry = math.floor(secs)
+            print(("|cff33ccffDragonUI Rage Fixes|r: quick re-entry window = %ds. Returning to the same instance within that is assumed to be the same run (no prompt)."):format(math.floor(secs)))
+        else
+            print(("|cff33ccffDragonUI Rage Fixes|r: /duf reentrywindow <seconds 0-900> (current: %d)"):format(
+                DragonUIRageFixesDB.detailsQuickReentry or 120))
+        end
     elseif cmd == "cleardetails" then
         if not DoDetailsOverallReset("manual reset") then
             print("|cff33ccffDragonUI Rage Fixes|r: Details isn't loaded (or has no ResetSegmentOverallData).")
